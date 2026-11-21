@@ -1,0 +1,8 @@
+# Rust
+gopro-rs/target/
+# Python
+__pycache__/
+*.pyc
+.venv/
+# macOS
+.DS_Store
