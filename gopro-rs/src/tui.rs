@@ -225,6 +225,10 @@ struct App {
     mode: Mode,
     gcols: usize,
     goff: usize,
+    /// rows visible in the list / card rows visible in the gallery (for ctrl-d / ctrl-u)
+    page_rows: usize,
+    /// first `g` of a `gg` chord, waiting for the second
+    pending_g: Option<Instant>,
     modal: Option<Modal>,
     thumbs: HashMap<(String, bool), Option<DynamicImage>>,
     requested: HashSet<(String, bool)>,
@@ -273,6 +277,8 @@ pub fn run(src: Source, dest: PathBuf, flat: bool, streams: usize) -> Result<()>
         mode: Mode::List,
         gcols: 4,
         goff: 0,
+        page_rows: 10,
+        pending_g: None,
         modal: None,
         thumbs: HashMap::new(),
         requested: HashSet::new(),
@@ -417,6 +423,12 @@ impl App {
                 }
             }
         }
+        if let Some(t) = self.pending_g {
+            if t.elapsed() > Duration::from_millis(400) {
+                self.pending_g = None;
+                self.toggle_gallery();
+            }
+        }
         if self.last_state.elapsed() > Duration::from_secs(30) && !self.importing() {
             self.last_state = Instant::now();
             let _ = self.jobs.send(Job::State);
@@ -511,6 +523,25 @@ impl App {
         let n = self.visible.len() as i64;
         self.pos = (self.pos as i64 + d).clamp(0, n - 1) as usize;
         self.sync_cursor();
+    }
+
+    fn jump_top(&mut self) {
+        self.move_by(-(self.visible.len() as i64));
+    }
+
+    fn jump_bottom(&mut self) {
+        self.move_by(self.visible.len() as i64);
+    }
+
+    /// vim ctrl-d / ctrl-u: half a screen (in cards for the gallery)
+    fn half_page(&mut self, dir: i64) {
+        let rows = (self.page_rows / 2).max(1) as i64;
+        let step = if self.mode == Mode::Gallery { rows * self.gcols as i64 } else { rows };
+        self.move_by(dir * step);
+    }
+
+    fn toggle_gallery(&mut self) {
+        self.mode = if self.mode == Mode::List { Mode::Gallery } else { Mode::List };
     }
 
     fn selected_files(&self) -> Vec<MediaFile> {
@@ -655,12 +686,31 @@ impl App {
             self.rebuild(cur.as_deref());
             return;
         }
+        if k.modifiers.contains(KeyModifiers::CONTROL) {
+            match k.code {
+                KeyCode::Char('d') => self.half_page(1),
+                KeyCode::Char('u') => self.half_page(-1),
+                _ => {}
+            }
+            return;
+        }
+        // `gg` jumps to the top; a lone `g` (after a short pause) toggles the gallery
+        if k.code == KeyCode::Char('g') {
+            if self.pending_g.take().is_some() {
+                self.jump_top();
+            } else {
+                self.pending_g = Some(Instant::now());
+            }
+            return;
+        }
+        if self.pending_g.take().is_some() {
+            // `g` followed by something else: run the gallery toggle, then the key
+            self.toggle_gallery();
+        }
         match k.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.modal = Some(Modal::Help),
-            KeyCode::Char('g') => {
-                self.mode = if self.mode == Mode::List { Mode::Gallery } else { Mode::List };
-            }
+            KeyCode::Tab => self.toggle_gallery(),
             KeyCode::Esc if self.mode == Mode::Gallery => self.mode = Mode::List,
             KeyCode::Esc if !self.text_filter.is_empty() => {
                 self.text_filter.clear();
@@ -721,10 +771,10 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_by(if self.mode == Mode::Gallery { self.gcols as i64 } else { 1 }),
             KeyCode::Left | KeyCode::Char('h') if self.mode == Mode::Gallery => self.move_by(-1),
             KeyCode::Right | KeyCode::Char('l') if self.mode == Mode::Gallery => self.move_by(1),
-            KeyCode::PageUp => self.move_by(-10),
-            KeyCode::PageDown => self.move_by(10),
-            KeyCode::Home => self.move_by(-(self.visible.len() as i64)),
-            KeyCode::End | KeyCode::Char('G') => self.move_by(self.visible.len() as i64),
+            KeyCode::PageUp => self.half_page(-2),
+            KeyCode::PageDown => self.half_page(2),
+            KeyCode::Home => self.jump_top(),
+            KeyCode::End | KeyCode::Char('G') => self.jump_bottom(),
             _ => {}
         }
     }
@@ -916,6 +966,7 @@ impl App {
         } else {
             (area, None)
         };
+        self.page_rows = tbl.height.saturating_sub(3).max(1) as usize;
         let mut rows = Vec::with_capacity(self.rows.len());
         for e in &self.rows {
             match e {
@@ -1078,6 +1129,7 @@ impl App {
         let cols = ((inner.width) / CARD_W).max(1) as usize;
         let vis_rows = (inner.height / CARD_H).max(1) as usize;
         self.gcols = cols;
+        self.page_rows = vis_rows;
         let cur_row = self.pos / cols;
         if cur_row < self.goff {
             self.goff = cur_row;
@@ -1174,13 +1226,14 @@ impl App {
                 );
             }
             Modal::Help => {
-                let r = centered(area, 66, 22);
+                let r = centered(area, 66, 24);
                 f.render_widget(Clear, r);
                 let lines = [
-                    ("↑↓ / jk", "move          "), ("PgUp/PgDn", "move by 10"),
+                    ("↑↓ / jk", "move          "), ("^d / ^u", "half a page down / up (PgUp/PgDn: a page)"),
+                    ("gg / G", "jump to top / bottom"),
                     ("space", "select / unselect"), ("a", "select all (toggle)"),
                     ("s", "select everything shot that day"), ("d", "import selected"),
-                    ("D", "import everything shown"), ("g", "gallery ⇄ list"),
+                    ("D", "import everything shown"), ("g / tab", "gallery ⇄ list"),
                     ("enter", "details + large preview"), ("p / P", "play video here / in VLC-QuickTime"), ("v", "cycle videos / photos / all"),
                     ("/", "filter by name"), ("x", "delete selected from camera"),
                     ("r", "refresh"), ("c", "change the import folder (remembered)"), ("o", "open import folder in Finder"),

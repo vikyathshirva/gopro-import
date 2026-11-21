@@ -89,12 +89,14 @@ The import folder defaults to `~/Movies/GoPro`. Press `c` in the TUI to change i
 
 | key | action |
 |---|---|
-| ↑↓ / jk, PgUp/PgDn, Home/End | move |
+| ↑↓ / jk | move (newest files are at the top) |
+| ctrl-d / ctrl-u | half a page down / up (PgUp/PgDn: a full page) |
+| gg / G | jump to top / bottom |
 | space | select / unselect |
 | a | select all shown (toggle) |
 | s | select everything shot that day |
 | d / D | import selected / import everything shown |
-| g | gallery ⇄ list |
+| g / tab | gallery ⇄ list |
 | enter | details with large preview |
 | p / P | play video in the terminal / in a desktop player with sound |
 | v | cycle videos / photos / all |

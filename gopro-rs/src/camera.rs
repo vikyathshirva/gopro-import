@@ -186,7 +186,8 @@ fn sort_files(files: &mut [MediaFile]) {
     files.sort_by(|a, b| {
         let ka = (a.created.map(|d| d.timestamp()).unwrap_or(0), a.number.unwrap_or(0), a.chapter.unwrap_or(0));
         let kb = (b.created.map(|d| d.timestamp()).unwrap_or(0), b.number.unwrap_or(0), b.chapter.unwrap_or(0));
-        ka.cmp(&kb).then_with(|| a.name.cmp(&b.name))
+        // newest first; chapters of one clip stay in shooting order
+        kb.cmp(&ka).then_with(|| b.name.cmp(&a.name))
     });
 }
 
